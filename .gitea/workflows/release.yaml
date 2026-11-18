@@ -1,0 +1,44 @@
+name: Release (GitHub + Terraform Registry)
+
+# Tag vX.Y.Z buduje i podpisuje provider (GoReleaser) i wypuszcza go jako GitHub Release
+# w publicznym repo sharqey/terraform-provider-sharqey, skąd czytają Terraform Registry i
+# OpenTofu Registry. Sekrety z grupy Sharqey master/sharqey/cicd:
+# GPG_PRIVATE_KEY, GPG_PASSPHRASE (klucz podpisu wydań), GITHUB_RELEASE_TOKEN.
+on:
+  push:
+    tags: ["v*"]
+
+jobs:
+  release:
+    container: golang:1.25-bookworm
+    runs-on: docker
+    env:
+      SHARQEY_SA_TOKEN: ${{ secrets.SHARQEY_PROD_SA_TOKEN }}
+      SHARQEY_SA_PRIVATE_KEY: ${{ secrets.SHARQEY_PROD_SA_PRIVATE_KEY }}
+      SHARQEY_SERVER_URL: https://app.sharqey.com
+    steps:
+      - run: apt-get update -qq && apt-get install -y -qq --no-install-recommends git gnupg curl ca-certificates nodejs >/dev/null
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Sekrety z Sharqeya
+        run: |
+          set -euo pipefail
+          curl -fsSL https://app.sharqey.com/dl/sharqey-linux-amd64 -o /usr/local/bin/sharqey && chmod +x /usr/local/bin/sharqey
+          eval "$(sharqey secrets env master/sharqey/cicd --export --service-account-token "$SHARQEY_SA_TOKEN")"
+          : "${GPG_PRIVATE_KEY:?}" "${GPG_PASSPHRASE:?}" "${GITHUB_RELEASE_TOKEN:?}"
+          umask 077
+          printf '%s' "$GPG_PASSPHRASE" > /tmp/gpg-pass
+          printf '%s\n' "$GPG_PRIVATE_KEY" | gpg --batch --pinentry-mode loopback --passphrase-file /tmp/gpg-pass --import
+          fpr="$(gpg --list-secret-keys --with-colons | awk -F: '/^fpr/{print $10; exit}')"
+          echo "GPG_FINGERPRINT=$fpr" >> "$GITHUB_ENV"
+          echo "GPG_PASSPHRASE_FILE=/tmp/gpg-pass" >> "$GITHUB_ENV"
+          echo "GITHUB_TOKEN=$GITHUB_RELEASE_TOKEN" >> "$GITHUB_ENV"
+          echo "::add-mask::$GITHUB_RELEASE_TOKEN"
+      - name: GoReleaser
+        run: |
+          set -euo pipefail
+          go run github.com/goreleaser/goreleaser/v2@v2.4.8 release --clean
+      - name: Sprzątanie
+        if: always()
+        run: rm -f /tmp/gpg-pass
