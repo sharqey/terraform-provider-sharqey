@@ -23,6 +23,12 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
+      # tfplugindocs eksportuje schemat przez binarkę Terraform; provider używa
+      # atrybutów write-only, więc potrzebny jest Terraform >= 1.11.
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "~1.12"
+          terraform_wrapper: false
       - name: Docs are up to date
         run: |
           go run github.com/hashicorp/terraform-plugin-docs/cmd/tfplugindocs@v0.20.1 generate --provider-name sharqey
