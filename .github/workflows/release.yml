@@ -1,0 +1,40 @@
+name: release
+
+# Tag vX.Y.Z buduje i podpisuje provider (GoReleaser) i publikuje go jako GitHub Release.
+# Stąd czytają Terraform Registry i OpenTofu Registry.
+# Sekrety repozytorium: GPG_PRIVATE_KEY, GPG_PASSPHRASE (klucz podpisu wydań).
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Import GPG key
+        env:
+          GPG_PRIVATE_KEY: ${{ secrets.GPG_PRIVATE_KEY }}
+          GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
+        run: |
+          set -euo pipefail
+          umask 077
+          printf '%s' "$GPG_PASSPHRASE" > "$RUNNER_TEMP/gpg-pass"
+          printf '%s\n' "$GPG_PRIVATE_KEY" | gpg --batch --pinentry-mode loopback --passphrase-file "$RUNNER_TEMP/gpg-pass" --import
+          echo "GPG_FINGERPRINT=$(gpg --list-secret-keys --with-colons | awk -F: '/^fpr/{print $10; exit}')" >> "$GITHUB_ENV"
+          echo "GPG_PASSPHRASE_FILE=$RUNNER_TEMP/gpg-pass" >> "$GITHUB_ENV"
+      - name: GoReleaser
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: go run github.com/goreleaser/goreleaser/v2@v2.4.8 release --clean
+      - name: Cleanup
+        if: always()
+        run: rm -f "$RUNNER_TEMP/gpg-pass"
